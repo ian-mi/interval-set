@@ -21,7 +21,9 @@ import Control.Applicative
 import Control.Lens
 import Data.Maybe
 
-data Interval = Interval { _lower :: Int, _upper :: Int }
+data Interval = Interval {
+    _lower :: Int,
+    _upper :: Int } deriving (Eq, Ord)
 $(makeLenses ''Interval)
 
 instance Show Interval where

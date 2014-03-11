@@ -82,5 +82,18 @@ nonEmpty = iso g (fromMaybe (IntervalSet IM.empty))
     where g s = if views intervalSet IM.null s then Nothing else Just s
 
 minusSet :: IntervalSet -> Fold Interval Interval
---minusSet = appEndo . foldMapOf intervals (Endo . minus)
-minusSet is f i = appEndo (foldMapOf (intersecting i) (Endo . minus) is) f i
+minusSet s f i
+    | Just (Interval l _) <- listToMaybe is,
+      Just j <- intersectStrictlyBelow l i = f j <* r is
+    | otherwise = r is
+    where   is = s ^.. intersecting i
+            r js
+                | [] <- js = f i
+                | [Interval _ u] <- js,
+                  Just j <- intersectStrictlyAbove u i = f j
+                | Interval _ a : js'@(Interval b _ : _) <- js
+                    = f (Interval (a + 1) (b - 1)) <* r js'
+                | otherwise = pure undefined
+
+setFromInterval :: Interval -> IntervalSet
+setFromInterval (Interval a b) = IntervalSet (IM.singleton a b)
