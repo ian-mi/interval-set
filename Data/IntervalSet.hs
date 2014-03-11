@@ -97,3 +97,9 @@ minusSet s f i
 
 setFromInterval :: Interval -> IntervalSet
 setFromInterval (Interval a b) = IntervalSet (IM.singleton a b)
+
+containsInterval :: IntervalSet -> Interval -> Bool
+containsInterval s i = isJust (containing i s)
+
+contains :: IntervalSet -> IntervalSet -> Bool
+contains a b = allOf intervals (containsInterval a) b
