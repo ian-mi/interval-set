@@ -1,105 +1,136 @@
 module Data.IntervalSet where
 
+import Data.Interval as I
+
 import Control.Applicative
 import Control.Lens
-import Control.Monad.State
-import Data.Interval
-import Data.Maybe
-import Data.Monoid
+import Data.List
 
-import qualified Data.IntMap as IM
-
-newtype IntervalSet = IntervalSet { _intervalSet :: IM.IntMap Int }
-$(makeLenses ''IntervalSet)
+data IntervalSet = IntervalSet {-# UNPACK #-} !Interval Tree | Empty
+data Tree = Node Tree {-# UNPACK #-} !Interval Tree | Leaf deriving Show
+data TTree = TNode TTree {-# UNPACK #-} !Interval TTree | TLeaf Tree
 
 instance Show IntervalSet where
-    show s = show (s ^.. intervals)
+    show s = concat ["{", intercalate ", " (s ^.. intervals . to show), "}"]
 
 intervals :: Fold IntervalSet Interval
-intervals = intervalSet . ifolded . withIndex . to (uncurry Interval)
+intervals f = foldIntervals (<*) (coerce . f) (pure undefined)
 
-above :: Int -> Fold IntervalSet Interval
-above i = strictlyAbove (i - 1)
+mkTree :: Interval -> TTree -> Interval -> TTree -> Tree
+mkTree (Interval a b) l m@(Interval c d) r
+    = Node (flatten (Interval a c) l) m (flatten (Interval d b) r)
 
-strictlyAbove :: Int -> Fold IntervalSet Interval
-strictlyAbove i = to (i,) . unfolded f
-    where f (j, s) = do
-            (a, b) <- views intervalSet (IM.lookupGT j) s
-            return (Interval a b, (b, s))
+flatten :: Interval -> TTree -> Tree
+flatten _ (TLeaf t) = t
+flatten i@(Interval a b) (TNode l m@(Interval c d) r)
+    |   ul + um + 1 < ur,
+        Just (rl, rm@(Interval e f), rr) <- pivotT i r,
+        e - a < ur = mkTree i (TNode l m rl) rm rr
+    |   ur + um + 1 < ul,
+        Just (ll, lm@(Interval e f), lr) <- pivotT i l,
+        b - f < ul = mkTree i ll lm (TNode lr m r)
+    |   otherwise = mkTree i l m r
+    where
+        ul = c - a
+        um = d - c
+        ur = b - d
 
-notBelow :: Int -> Fold IntervalSet Interval
-notBelow i f s
-    | Just (a, b) <- views intervalSet (IM.lookupLT i) s, b > i
-        = f (Interval a b) *> strictlyAbove b f s
-    | otherwise = above i f s
+pivotT :: Interval -> TTree -> Maybe (TTree, Interval, TTree)
+pivotT i (TLeaf t) = pivot i t
+pivotT i@(Interval a b) (TNode l m@(Interval c d) r)
+    |   ul + um + 1 < ur,
+        Just (rl, rm@(Interval e f), rr) <- pivotT i r,
+        e - a < ur = Just (TNode l m rl, rm, rr)
+    |   ur + um + 1 < ul,
+        Just (ll, lm@(Interval e f), lr) <- pivotT i l,
+        b - f < ul = Just (ll, lm, TNode lr m r)
+    |   otherwise = Just (l, m, r)
+    where
+        ul = c - a
+        um = d - c
+        ur = b - d
 
-notStrictlyBelow :: Int -> Fold IntervalSet Interval
-notStrictlyBelow i f s
-    | Just (a, b) <- views intervalSet (IM.lookupLT i) s, b >= i
-        = f (Interval a b) *> strictlyAbove b f s
-    | otherwise = above i f s
+pivot :: Interval -> Tree -> Maybe (TTree, Interval, TTree)
+pivot _ Leaf = Nothing
+pivot i@(Interval a b) (Node l m@(Interval c d) r)
+    |   ul + um + 1 < ur,
+        Just (rl, rm@(Interval e f), rr) <- pivot i r,
+        e - a < ur = Just (TNode (TLeaf l) m rl, rm, rr)
+    |   ur + um + 1 < ul,
+        Just (ll, lm@(Interval e f), lr) <- pivot i l,
+        b - f < ul = Just (ll, lm, TNode lr m (TLeaf r))
+    |   otherwise = Just (TLeaf l, m, TLeaf r)
+    where
+        ul = c - a
+        um = d - c
+        ur = b - d
 
-containedBy :: Interval -> Fold IntervalSet Interval
-containedBy (Interval a b) = takingWhile (boundedAbove b) (above a)
+balance :: Interval -> Tree -> Interval -> Tree -> Tree
+balance i l m r = flatten i (TNode (TLeaf l) m (TLeaf r))
 
-strictlyContainedBy :: Interval -> Fold IntervalSet Interval
-strictlyContainedBy (interior -> Just i) = containedBy i
-strictlyContainedBy _ = ignored
+insertTrees :: Interval -> Tree -> Tree -> TTree
+insertTrees i Leaf t = insertTree i t
+insertTrees i@(Interval x y) (Node ll lm@(Interval c d) lr) r
+    | x <= c = insertTrees i ll r
+    | x <= d = TNode (TLeaf ll) (Interval c x) (insertTree i r)
+    | otherwise = TNode (TLeaf ll) lm (insertTrees i lr r)
 
-containing :: Interval -> IntervalSet -> Maybe Interval
-containing (Interval a b) (IntervalSet s)
-    | Just (c, d) <- IM.lookupLE a s, d >= b = Just (Interval c d)
-    | otherwise = Nothing
+insertTree :: Interval -> Tree -> TTree
+insertTree _ Leaf = TLeaf Leaf
+insertTree i@(Interval x y) (Node l (Interval c d) r)
+    | x <= c, y >= d = insertTrees i l r
+    | x <= c = TNode (insertTree i l) (Interval (max c y) d) (TLeaf r)
+    | y >= d = TNode (TLeaf l) (Interval c (min d x)) (insertTree i r)
+    | otherwise =
+        TNode (TLeaf l) (Interval c x) (TNode (TLeaf Leaf) (Interval y d) (TLeaf r))
 
-intersecting :: Interval -> Fold IntervalSet Interval
-intersecting (Interval a b) =
-    takingWhile (not . boundedStrictlyBelow b) (notStrictlyBelow a)
+insertContained :: Interval -> Interval -> Tree -> Tree
+insertContained _ _ Leaf = Leaf
+insertContained i@(Interval x y) j@(Interval a b) t@(Node l m@(Interval c d) r)
+    | y <= c = Node (insertContained i (Interval a c) l) m r
+    | x >= d = Node l m (insertContained i (Interval d b) r)
+    | otherwise = flatten j (insertTree i t)
 
-touching :: Interval -> Fold IntervalSet Interval
-touching (Interval a b) = intersecting (Interval (a - 1) (b + 1))
+insert :: Interval -> IntervalSet -> IntervalSet
+insert i Empty = IntervalSet i Leaf
+insert i@(Interval x y) (IntervalSet j@(Interval a b) t)
+    | x > b = let j' = Interval a y in
+        IntervalSet j' (balance j' t (Interval b x) Leaf)
+    | y < a = let j' = Interval x b in
+        IntervalSet j' (balance j' Leaf (Interval y a) t)
+    | x >= a && y <= b = IntervalSet j (insertContained i j t)
+    | otherwise = IntervalSet j' (flatten j' (insertTree i t))
+    where j' = Interval (min a x) (max b y)
 
-deleteInterval :: Interval -> State IntervalSet ()
-deleteInterval = (intervalSet %=) . IM.delete . view lower
+foldSet :: (Interval -> Tree -> a) -> a -> IntervalSet -> a
+foldSet _ v Empty = v
+foldSet f v (IntervalSet i t) = f i t
 
-insertInterval :: Interval -> State IntervalSet ()
-insertInterval (Interval a b) = intervalSet %= IM.insert a b
+foldTree :: (a -> Interval -> a -> a) -> a -> Tree -> a
+foldTree _ v Leaf = v
+foldTree f v (Node l m r) = f (foldTree f v l) m (foldTree f v r)
 
-addInterval :: Interval -> State IntervalSet ()
-addInterval i = do
-    t <- gets (toListOf (touching i))
-    mapM_ deleteInterval t
-    insertInterval (foldBy sup i t)
+fold :: (Interval -> a -> b) -> b -> (a -> Interval -> a -> a) -> a -> IntervalSet -> b
+fold g e f v = foldSet (\i -> g i . foldTree f v) e
 
-removeInterval :: Interval -> State IntervalSet [Interval]
-removeInterval i = do
-    t <- gets (toListOf (touching i))
-    mapM_ deleteInterval t
-    t ^! folded . minus i . act insertInterval
-    return (t ^.. folded . to (inf i) . _Just)
+foldIntervals :: (a -> a -> a) -> (Interval -> a) -> a -> IntervalSet -> a
+foldIntervals g f v = fold (flip ($)) v h f
+    where   h fl (Interval c d) fr (Interval a b) = g (fl il) (fr ir)
+                where   il = Interval a c
+                        ir = Interval d b
 
-nonEmpty :: Iso' IntervalSet (Maybe IntervalSet)
-nonEmpty = iso g (fromMaybe (IntervalSet IM.empty))
-    where g s = if views intervalSet IM.null s then Nothing else Just s
+foldIntervalsWithComplement ::
+    (a -> Interval -> a -> a) -> (Interval -> a) -> a -> IntervalSet -> a
+foldIntervalsWithComplement g f v = fold (flip ($)) v h f
+    where   h fl im@(Interval c d) fr (Interval a b) = g (fl il) im (fr ir)
+                where   il = Interval a c
+                        ir = Interval d b
 
-minusSet :: IntervalSet -> Fold Interval Interval
-minusSet s f i
-    | Just (Interval l _) <- listToMaybe is,
-      Just j <- intersectStrictlyBelow l i = f j <* r is
-    | otherwise = r is
-    where   is = s ^.. intersecting i
-            r js
-                | [] <- js = f i
-                | [Interval _ u] <- js,
-                  Just j <- intersectStrictlyAbove u i = f j
-                | Interval _ a : js'@(Interval b _ : _) <- js
-                    = f (Interval (a + 1) (b - 1)) <* r js'
-                | otherwise = pure undefined
-
-setFromInterval :: Interval -> IntervalSet
-setFromInterval (Interval a b) = IntervalSet (IM.singleton a b)
-
-containsInterval :: IntervalSet -> Interval -> Bool
-containsInterval s i = isJust (containing i s)
-
-contains :: IntervalSet -> IntervalSet -> Bool
-contains a b = allOf intervals (containsInterval a) b
+elem x = fold g False f True
+    where   g i v
+                | I.elem x i = v
+                | otherwise = False
+            f l (Interval a b) r
+                | x < a = l
+                | x >= b = r
+                | otherwise = False
