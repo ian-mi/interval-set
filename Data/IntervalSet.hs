@@ -102,6 +102,30 @@ insert i@(Interval x y) (IntervalSet j@(Interval a b) t)
     | otherwise = IntervalSet j' (flatten j' (insertTree i t))
     where j' = Interval (min a x) (max b y)
 
+deleteTree ::Interval ->Interval ->Tree ->(Interval, TTree)
+deleteTree i@(Interval x y) j@(Interval a b) Leaf
+        | x > a, y < b = (j, TLeaf (Node Leaf i Leaf))
+        | x > a, x < b = (Interval a x, TLeaf Leaf)
+        | y > a, y < b = (Interval y b, TLeaf Leaf)
+        | otherwise = (j, TLeaf Leaf)
+deleteTree i@(Interval x y) j@(Interval a b) t@(Node l m@(Interval c d) r)
+        | x >=b ||y <=a ||I.contains m i = (j, TLeaf t)
+        | I.contains i ir = (il', l')
+        | I.contains i il = (ir', r')
+        | otherwise = (Interval a' b', TNode l' (Interval c' d') r')
+        where
+                il = Interval a c
+                ir = Interval d b
+                (il'@(Interval a' c'), l') = deleteTree i il l
+                (ir'@(Interval d' b'), r') = deleteTree i ir r
+
+delete :: Interval -> IntervalSet -> IntervalSet
+delete _ Empty = Empty
+delete i@(Interval x y) s@(IntervalSet j@(Interval a b) t)
+        | I.contains i j = Empty
+        | otherwise = IntervalSet j' (flatten j' t')
+        where (j', t') = deleteTree i j t
+
 foldSet :: (Interval -> Tree -> a) -> a -> IntervalSet -> a
 foldSet _ v Empty = v
 foldSet f v (IntervalSet i t) = f i t

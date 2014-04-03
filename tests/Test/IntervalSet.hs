@@ -1,7 +1,7 @@
 module Test.IntervalSet where
 
-import Data.Interval as I
-import Data.IntervalSet as IS
+import Data.Interval
+import Data.IntervalSet
 import Test.Interval
 
 import Control.Applicative
@@ -10,26 +10,17 @@ import Data.Monoid
 import Test.SmallCheck
 import Test.SmallCheck.Series
 
-intervalAbove :: Monad m => Int -> Series m Interval
-intervalAbove i = cons2 f
-    where f (Positive x) (Positive y) = let a = i + x in Interval a (a + y)
-
-intervalsAbove :: Monad m => Int -> Series m [Interval]
-intervalsAbove i = do
-    x@(Interval _ b) <- intervalAbove i
-    xs <- decDepth (intervalsAbove b) <|> pure []
-    return (x:xs)
-
-increasingIntervals :: Monad m => Series m [Interval]
-increasingIntervals = do
-    x@(Interval _ b) <- series
-    xs <- decDepth (intervalsAbove b) <|> pure []
-    return (x:xs)
+balancedSubtrees :: Monad m => Interval -> Int -> Int -> Series m Tree
+balancedSubtrees (Interval a b) lmin rmin = return Leaf \/ do
+    m@(Interval c d) <- subintervals (Interval (a + lmin) (b - rmin))
+    let lrmin = max (c - a - (b - c)) 1
+    let rlmin = max (b - d - (d - a)) 1
+    l <- balancedSubtrees (Interval a c) lmin lrmin
+    r <- balancedSubtrees (Interval d b) rlmin rmin
+    return (Node l m r)
 
 instance Monad m => Serial m IntervalSet where
-    series = do
-        is <- pure [] \/ decDepth increasingIntervals
-        return (appEndo (foldMap (Endo . insert) is) Empty)
-
-unionInterval :: IntervalSet -> Interval -> Int -> Bool
-unionInterval s i x = IS.elem x (IS.insert i s) == (IS.elem x s || I.elem x i)
+    series = return Empty \/ do
+        i <- series
+        t <- balancedSubtrees i 1 1
+        return (IntervalSet i t)
