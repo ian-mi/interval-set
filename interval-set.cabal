@@ -11,10 +11,9 @@ cabal-version:       >=1.10
 
 
 library
-  exposed-modules:      Data.Interval, Data.IntervalSet
-  build-depends:        base >=4.6 && <4.7,
-                        lens >= 4.0 && < 4.2
-  default-language:     Haskell2010
+        exposed-modules: Data.Interval, Data.IntervalSet
+        build-depends: base >=4.6 && <4.7, lens >= 4.0 && < 4.2
+        default-language: Haskell2010
 
 Test-Suite tasty
     type: exitcode-stdio-1.0

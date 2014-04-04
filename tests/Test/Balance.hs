@@ -1,7 +1,7 @@
 module Test.Balance where
 
 import Data.Interval
-import Data.IntervalSet
+import Data.IntervalSet as IS
 
 balanced :: IntervalSet -> Bool
 balanced Empty = True
@@ -21,3 +21,6 @@ balancedIntervalUnion s i = balanced (insert i s)
 
 balancedIntervalComplement ::IntervalSet ->Interval ->Bool
 balancedIntervalComplement s i = balanced (delete i s)
+
+balancedIntervalIntersection ::IntervalSet ->Interval ->Bool
+balancedIntervalIntersection s i = balanced (IS.intersect i s)

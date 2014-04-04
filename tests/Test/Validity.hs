@@ -1,7 +1,7 @@
 module Test.Validity where
 
 import Data.Interval
-import Data.IntervalSet
+import Data.IntervalSet as IS
 
 valid :: IntervalSet -> Bool
 valid Empty = True
@@ -17,3 +17,6 @@ validIntervalUnion s i = valid (insert i s)
 
 validIntervalComplement ::IntervalSet ->Interval ->Bool
 validIntervalComplement s i = valid (delete i s)
+
+validIntervalIntersection ::IntervalSet ->Interval ->Bool
+validIntervalIntersection s i = valid (IS.intersect i s)

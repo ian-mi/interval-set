@@ -13,9 +13,6 @@ data TTree = TNode TTree {-# UNPACK #-} !Interval TTree | TLeaf Tree
 instance Show IntervalSet where
     show s = concat ["{", intercalate ", " (s ^.. intervals . to show), "}"]
 
-intervals :: Fold IntervalSet Interval
-intervals f = foldIntervals (<*) (coerce . f) (pure undefined)
-
 mkTree :: Interval -> TTree -> Interval -> TTree -> Tree
 mkTree (Interval a b) l m@(Interval c d) r
     = Node (flatten (Interval a c) l) m (flatten (Interval d b) r)
@@ -126,6 +123,32 @@ delete i@(Interval x y) s@(IntervalSet j@(Interval a b) t)
         | otherwise = IntervalSet j' (flatten j' t')
         where (j', t') = deleteTree i j t
 
+intersectTree ::Interval ->Interval ->Tree ->Maybe (Interval, TTree)
+intersectTree i j Leaf
+        | Just j' <-I.intersect i j = Just (j', TLeaf Leaf)
+        | otherwise = Nothing
+intersectTree i j@(Interval a b) (Node l m@(Interval c d) r)
+        | Just j' <-I.intersect i j = case intersectTree i jl l of
+                Just l'
+                        | Just r' <-intersectTree i jr r ->Just (combineTTrees l' r')
+                        | otherwise ->Just l' 
+                otherwise ->intersectTree i jr r
+        | otherwise = Nothing
+        where
+                jl = Interval a c
+                jr = Interval d b
+
+{-# INLINE combineTTrees #-}
+combineTTrees ::(Interval, TTree) ->(Interval, TTree) ->(Interval, TTree)
+combineTTrees (Interval a b, l) (Interval c d, r)
+        = (Interval a d, TNode l (Interval b c) r)
+
+intersect ::Interval ->IntervalSet ->IntervalSet
+intersect _ Empty = Empty
+intersect i (IntervalSet j t)
+        | Just (j', t') <-intersectTree i j t = IntervalSet j' (flatten j' t')
+        | otherwise = Empty
+
 foldSet :: (Interval -> Tree -> a) -> a -> IntervalSet -> a
 foldSet _ v Empty = v
 foldSet f v (IntervalSet i t) = f i t
@@ -144,11 +167,14 @@ foldIntervals g f v = fold (flip ($)) v h f
                         ir = Interval d b
 
 foldIntervalsWithComplement ::
-    (a -> Interval -> a -> a) -> (Interval -> a) -> a -> IntervalSet -> a
-foldIntervalsWithComplement g f v = fold (flip ($)) v h f
-    where   h fl im@(Interval c d) fr (Interval a b) = g (fl il) im (fr ir)
-                where   il = Interval a c
-                        ir = Interval d b
+    a ->(Interval ->a ->a) ->(a ->Interval ->a ->a) ->(Interval ->a) ->IntervalSet ->a
+foldIntervalsWithComplement v h g f = fold h' v g' f
+    where
+                g' fl im@(Interval c d) fr (Interval a b) = g (fl il) im (fr ir)
+                        where
+                                il = Interval a c
+                                ir = Interval d b
+                h' i k = h i (k i)
 
 elem x = fold g False f True
     where   g i v
@@ -158,3 +184,6 @@ elem x = fold g False f True
                 | x < a = l
                 | x >= b = r
                 | otherwise = False
+
+intervals :: Fold IntervalSet Interval
+intervals f = foldIntervals (<*) (coerce . f) (pure undefined)
